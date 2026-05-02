@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 
@@ -11,7 +12,7 @@ BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v
 
 class PropertySchema(BaseModel):
     type: str
-    desc: str
+    description: str
 
 class ParameterSchema(BaseModel):
     type: Literal["object"] = "object"
@@ -20,7 +21,7 @@ class ParameterSchema(BaseModel):
 
 class FunctionDefinition(BaseModel):
     name: str
-    desc: str
+    description: str
     props: ParameterSchema
 
 class FunctionTool(BaseModel):
@@ -33,18 +34,24 @@ class ReadTool(FunctionTool):
             type = "function",
             function = FunctionDefinition(
                 name = "Read",
-                desc = "Read and return the contents of a file",
+                description = "Read and return the contents of a file",
                 props = ParameterSchema(
                         type = "object",
-                        props = {"file_path": PropertySchema(type="string", desc="The path to the file to read")},
+                        props = {"file_path": PropertySchema(type="string", description="The path to the file to read")},
                         required = [ "file_path" ],
                 )
             )
         )
+    def __call__(self, args: dict):
+        with open(args["file_path"], 'r') as file:
+            content = file.read()
+        return content
 
 tools = [
     ReadTool().model_dump()
 ]
+
+func_tools_map = {"Read": ReadTool()}
 
 model = "anthropic/claude-haiku-4.5" if not os.getenv("CC_LOCAL") else "qwen-plus"
 
@@ -70,7 +77,22 @@ def main():
     # You can use print statements as follows for debugging, they'll be visible when running tests.
     print("Logs from your program will appear here!", file=sys.stderr)
 
-    print(chat.choices[0].message.content)
+
+    if chat.choices[0].finish_reason == "tool_calls":
+        tool_calls = chat.choices[0].message.tool_calls
+        print(tool_calls)
+        for tool_call in tool_calls:
+            if tool_call.type == "function":
+                name, args = tool_call.function.name, tool_call.function.arguments
+                args = json.loads(args)
+                print(name, args)
+                if name not in func_tools_map:
+                    raise RuntimeError("func tool {name} not found")
+                print(func_tools_map[name](args))
+            else:
+                raise RuntimeError("we don't have non-function tools yet")
+    else:
+        print(chat.choices[0].message.content)
 
 
 if __name__ == "__main__":
