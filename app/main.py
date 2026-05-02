@@ -83,12 +83,10 @@ def main():
 
     if chat.choices[0].finish_reason == "tool_calls":
         tool_calls = chat.choices[0].message.tool_calls
-        print(tool_calls)
         for tool_call in tool_calls:
             if tool_call.type == "function":
                 name, args = tool_call.function.name, tool_call.function.arguments
                 args = json.loads(args)
-                print(name, args)
                 if name not in func_tools_map:
                     raise RuntimeError("func tool {name} not found")
                 print(func_tools_map[name](args))
