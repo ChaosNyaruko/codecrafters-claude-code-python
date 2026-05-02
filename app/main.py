@@ -22,7 +22,7 @@ class ParameterSchema(BaseModel):
 class FunctionDefinition(BaseModel):
     name: str
     description: str
-    props: ParameterSchema
+    params: ParameterSchema
 
 class FunctionTool(BaseModel):
     type: Literal["function"] = "function"
@@ -35,7 +35,7 @@ class ReadTool(FunctionTool):
             function = FunctionDefinition(
                 name = "Read",
                 description = "Read and return the contents of a file",
-                props = ParameterSchema(
+                params = ParameterSchema(
                         type = "object",
                         props = {"file_path": PropertySchema(type="string", description="The path to the file to read")},
                         required = [ "file_path" ],
@@ -43,7 +43,10 @@ class ReadTool(FunctionTool):
             )
         )
     def __call__(self, args: dict):
-        with open(args["file_path"], 'r') as file:
+        props = list(self.function.params.props.keys())
+        akeys = list(args.keys())
+        assert akeys[0] == props[0], "the argument is called different"
+        with open(list(args.values())[0], 'r') as file:
             content = file.read()
         return content
 
