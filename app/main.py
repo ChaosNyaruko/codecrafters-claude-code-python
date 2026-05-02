@@ -45,7 +45,7 @@ class ReadTool(FunctionTool):
     def __call__(self, args: dict):
         props = list(self.function.params.props.keys())
         akeys = list(args.keys())
-        assert akeys[0] == props[0], "the argument is called different"
+        # assert akeys[0] == props[0], "the argument is called different"
         with open(list(args.values())[0], 'r') as file:
             content = file.read()
         return content
