@@ -83,7 +83,7 @@ class ReadTool(FunctionTool):
             with open(filename, 'r') as file:
                 content = file.read()
         except Exception as e:
-            print("exception: read ", args, e)
+            print("exception: read ", args, e, file=sys.stderr)
             return ""
         return content
 
@@ -129,7 +129,6 @@ def main():
                 if tool_call.type == "function":
                     name, args = tool_call.function.name, tool_call.function.arguments
                     args = json.loads(args)
-                    print("args: ", args)
                     if name not in func_tools_map:
                         raise RuntimeError("func tool {name} not found")
                     tool_result = func_tools_map[name](args)
