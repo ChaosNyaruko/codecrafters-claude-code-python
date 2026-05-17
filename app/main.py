@@ -12,7 +12,7 @@ API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
 
 local = os.getenv("CC_LOCAL")
-model = "anthropic/claude-sonnet-4.5" if not local else "qwen-plus"
+model = "anthropic/claude-haiku-4.5" if not local else "qwen-plus"
 
 class PropertySchema(BaseModel):
     type: str
