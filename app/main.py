@@ -10,6 +10,9 @@ from openai import OpenAI
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
 
+local = os.getenv("CC_LOCAL")
+model = "anthropic/claude-haiku-4.5" if not local else "qwen-plus"
+
 class PropertySchema(BaseModel):
     type: str
     description: str
@@ -41,7 +44,7 @@ class WriteTool(FunctionTool):
                             "file_path": PropertySchema(type="string", description="The path of the file to write to"),
                             "content":  PropertySchema(type="string", description="The content to write to the file"),
                         },
-                        required = [ "file_path" ],
+                        required = [ "file_path", "content" ],
                 )
             )
         )
@@ -87,14 +90,47 @@ class ReadTool(FunctionTool):
             return ""
         return content
 
+class BashTool(FunctionTool):
+    def __init__(self):
+        super().__init__(
+            type = "function",
+            function = FunctionDefinition(
+                name = "Bash",
+                description = "Execute a shell command",
+                params = ParameterSchema(
+                        type = "object",
+                        props = {"command": PropertySchema(type="string", description="The command to execute")},
+                        required = [ "command" ],
+                )
+            )
+        )
+    def __call__(self, args):
+        args = args.get("parameter") or args.get("parameters") or args.get("command")
+        print("bash args: ", args, file=sys.stderr)
+        command = args
+        if not command:
+            return "no command provided"
+        try:
+            if local:
+                return f"executed command: {command}"
+            else:
+                result = subprocess.run(["bash", "-c", command], capture_output = True)
+                if result.returncode != 0:
+                    return f"exit code: {result.returncode}, stder {result.stderr}"
+                else:
+                    return result.stdout
+        except Exception as e:
+            print("exception: bash ", args, e, file=sys.stderr)
+            return "error"
+
 tools = [
     ReadTool().model_dump(),
-    WriteTool().model_dump()
+    WriteTool().model_dump(),
+    BashTool().model_dump()
 ]
 
-func_tools_map = {"Read": ReadTool(), "Write": WriteTool()}
+func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool()}
 
-model = "anthropic/claude-haiku-4.5" if not os.getenv("CC_LOCAL") else "qwen-plus"
 
 def main():
     p = argparse.ArgumentParser()
