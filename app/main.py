@@ -51,7 +51,7 @@ class WriteTool(FunctionTool):
         # assert akeys[0] == props[0], "the argument is called different"
         try:
             args = list(args.values())
-            print("args: ", args)
+            # print("args: ", args)
             filename = args[0]
             content = args[1]
             with open(filename, 'w') as file:
