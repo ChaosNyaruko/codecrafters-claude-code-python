@@ -47,6 +47,7 @@ class WriteTool(FunctionTool):
         )
     def __call__(self, args: dict):
         try:
+            args = args.get("parameter") or args.get("parameters") or args
             args = list(args.values())
             print("write args: ", args, file=sys.stderr)
             filename = args[0]
