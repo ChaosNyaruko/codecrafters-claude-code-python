@@ -46,8 +46,12 @@ class ReadTool(FunctionTool):
         props = list(self.function.params.props.keys())
         akeys = list(args.keys())
         # assert akeys[0] == props[0], "the argument is called different"
-        with open(list(args.values())[0], 'r') as file:
-            content = file.read()
+        try:
+            with open(list(args.values())[0], 'r') as file:
+                content = file.read()
+        except Exception as e:
+            print("exception: read ", args, e)
+            return ""
         return content
 
 tools = [
@@ -68,33 +72,42 @@ def main():
 
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
-    chat = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": args.p}],
-        tools = tools
-    )
+    messages = [{"role": "user", "content": args.p}]
 
-    if not chat.choices or len(chat.choices) == 0:
-        raise RuntimeError("no choices in response")
+    while True:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools = tools
+        )
 
-    # You can use print statements as follows for debugging, they'll be visible when running tests.
-    print("Logs from your program will appear here!", file=sys.stderr)
+        if not response.choices or len(response.choices) == 0:
+            raise RuntimeError("no choices in response")
 
-
-    if chat.choices[0].finish_reason == "tool_calls":
-        tool_calls = chat.choices[0].message.tool_calls
-        for tool_call in tool_calls:
-            if tool_call.type == "function":
-                name, args = tool_call.function.name, tool_call.function.arguments
-                args = json.loads(args)
-                if name not in func_tools_map:
-                    raise RuntimeError("func tool {name} not found")
-                print(func_tools_map[name](args))
-            else:
-                raise RuntimeError("we don't have non-function tools yet")
-    else:
-        print(chat.choices[0].message.content)
+        if response.choices[0].finish_reason == "tool_calls":
+            tool_calls = response.choices[0].message.tool_calls
+            for tool_call in tool_calls:
+                tool_call_id = tool_call.id
+                if tool_call.type == "function":
+                    name, args = tool_call.function.name, tool_call.function.arguments
+                    args = json.loads(args)
+                    if name not in func_tools_map:
+                        raise RuntimeError("func tool {name} not found")
+                    print("tool_call:", tool_call, file=sys.stderr)
+                    tool_result = func_tools_map[name](args)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": tool_result,
+                    })
+                else:
+                    raise RuntimeError("we don't have non-function tools yet")
+        else:
+            print(response.choices[0].message.content)
+            break
 
 
 if __name__ == "__main__":
+    # You can use print statements as follows for debugging, they'll be visible when running tests.
+    print("Logs from your program will appear here!", file=sys.stderr)
     main()
