@@ -128,7 +128,7 @@ def main():
                 tool_call_id = tool_call.id
                 if tool_call.type == "function":
                     name, args = tool_call.function.name, tool_call.function.arguments
-                    args = json.loads(args)
+                    args = json.loads(args).parameters
                     if name not in func_tools_map:
                         raise RuntimeError("func tool {name} not found")
                     tool_result = func_tools_map[name](args)
