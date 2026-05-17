@@ -89,13 +89,7 @@ def main():
             tool_calls = response.choices[0].message.tool_calls
             role = response.choices[0].message.role
             content = response.choices[0].message.content
-            print(f"role: {role}, content: {content}", file=sys.stderr)
-            messages.append(
-                    {
-                        "role": role,
-                        "content": content,
-                    }
-                )
+            messages.append(response.choices[0].message)
             for tool_call in tool_calls:
                 tool_call_id = tool_call.id
                 if tool_call.type == "function":
