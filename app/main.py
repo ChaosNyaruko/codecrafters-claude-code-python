@@ -103,6 +103,7 @@ def main():
                     })
                 else:
                     raise RuntimeError("we don't have non-function tools yet")
+            break
         else:
             print(response.choices[0].message.content)
             break
