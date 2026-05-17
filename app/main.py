@@ -28,6 +28,39 @@ class FunctionTool(BaseModel):
     type: Literal["function"] = "function"
     function: FunctionDefinition
 
+class WriteTool(FunctionTool):
+    def __init__(self):
+        super().__init__(
+            type = "function",
+            function = FunctionDefinition(
+                name = "Write",
+                description = "Write content to a file",
+                params = ParameterSchema(
+                        type = "object",
+                        props = {
+                            "file_path": PropertySchema(type="string", description="The path of the file to write to"),
+                            "content":  PropertySchema(type="string", description="The content to write to the file"),
+                        },
+                        required = [ "file_path" ],
+                )
+            )
+        )
+    def __call__(self, args: dict):
+        props = list(self.function.params.props.keys())
+        akeys = list(args.keys())
+        # assert akeys[0] == props[0], "the argument is called different"
+        try:
+            args = list(args.values())
+            print("args: ", args)
+            filename = args[0]
+            content = args[1]
+            with open(filename, 'w') as file:
+                file.write(cotent)
+        except Exception as e:
+            print("exception: write ", args, e)
+            return f"Write error, {e}"
+        return f"file {filename} written successfully"
+
 class ReadTool(FunctionTool):
     def __init__(self):
         super().__init__(
@@ -55,10 +88,11 @@ class ReadTool(FunctionTool):
         return content
 
 tools = [
-    ReadTool().model_dump()
+    ReadTool().model_dump(),
+    WriteTool().model_dump()
 ]
 
-func_tools_map = {"Read": ReadTool()}
+func_tools_map = {"Read": ReadTool(), "Write": WriteTool()}
 
 model = "anthropic/claude-haiku-4.5" if not os.getenv("CC_LOCAL") else "qwen-plus"
 
