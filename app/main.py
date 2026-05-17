@@ -117,9 +117,9 @@ class BashTool(FunctionTool):
             else:
                 result = subprocess.run(["bash", "-c", command], capture_output = True)
                 if result.returncode != 0:
-                    return f"exit code: {result.returncode}, stder {result.stderr}"
+                    return f"exit code: {result.returncode}, stderr {result.stderr}"
                 else:
-                    return result.stdout
+                    return f"sucess, output\n: {result.stdout}"
         except Exception as e:
             print("exception: bash ", args, e, file=sys.stderr)
             return "error"
