@@ -48,11 +48,11 @@ class WriteTool(FunctionTool):
     def __call__(self, args: dict):
         try:
             args = list(args.values())
-            # print("args: ", args)
+            print("write args: ", args, file=sys.stderr)
             filename = args[0]
             content = args[1]
             with open(filename, 'w') as file:
-                file.write(cotent)
+                file.write(content)
         except Exception as e:
             print("exception: write ", args, e)
             return f"Write error, {e}"
