@@ -74,6 +74,7 @@ class ReadTool(FunctionTool):
             )
         )
     def __call__(self, args):
+        args = args.get("parameter") or args.get("parameters") or args
         print("read args: ", args, file=sys.stderr)
         filename = args
         if not filename:
