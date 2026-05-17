@@ -84,6 +84,7 @@ def main():
         if not response.choices or len(response.choices) == 0:
             raise RuntimeError("no choices in response")
 
+        print(f"response: {response}", file=sys.stderr)
         if response.choices[0].finish_reason == "tool_calls":
             tool_calls = response.choices[0].message.tool_calls
             for tool_call in tool_calls:
@@ -93,8 +94,8 @@ def main():
                     args = json.loads(args)
                     if name not in func_tools_map:
                         raise RuntimeError("func tool {name} not found")
-                    print("tool_call:", tool_call, file=sys.stderr)
                     tool_result = func_tools_map[name](args)
+                    print(f"tool_call result: {tool_call}, result: {tool_result}", file=sys.stderr)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call_id,
@@ -102,6 +103,7 @@ def main():
                     })
                 else:
                     raise RuntimeError("we don't have non-function tools yet")
+            break
         else:
             print(response.choices[0].message.content)
             break
