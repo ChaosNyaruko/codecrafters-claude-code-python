@@ -46,9 +46,6 @@ class WriteTool(FunctionTool):
             )
         )
     def __call__(self, args: dict):
-        props = list(self.function.params.props.keys())
-        akeys = list(args.keys())
-        # assert akeys[0] == props[0], "the argument is called different"
         try:
             args = list(args.values())
             # print("args: ", args)
@@ -76,9 +73,6 @@ class ReadTool(FunctionTool):
             )
         )
     def __call__(self, args: dict):
-        props = list(self.function.params.props.keys())
-        akeys = list(args.keys())
-        # assert akeys[0] == props[0], "the argument is called different"
         try:
             with open(list(args.values())[0], 'r') as file:
                 content = file.read()
@@ -128,7 +122,9 @@ def main():
                 tool_call_id = tool_call.id
                 if tool_call.type == "function":
                     name, args = tool_call.function.name, tool_call.function.arguments
-                    args = json.loads(args).parameters
+                    args = json.loads(args)
+                    print("args: ", args)
+                    args = args.get("parameter")
                     if name not in func_tools_map:
                         raise RuntimeError("func tool {name} not found")
                     tool_result = func_tools_map[name](args)
