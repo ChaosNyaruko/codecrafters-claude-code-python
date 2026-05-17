@@ -72,10 +72,13 @@ class ReadTool(FunctionTool):
                 )
             )
         )
-    def __call__(self, args: dict):
+    def __call__(self, args):
         print("read args: ", args, file=sys.stderr)
+        filename = args
+        if not filename:
+            return "no file name provided"
         try:
-            with open(list(args.values())[0], 'r') as file:
+            with open(filename, 'r') as file:
                 content = file.read()
         except Exception as e:
             print("exception: read ", args, e)
@@ -125,7 +128,6 @@ def main():
                     name, args = tool_call.function.name, tool_call.function.arguments
                     args = json.loads(args)
                     print("args: ", args)
-                    args = args.get("parameter")
                     if name not in func_tools_map:
                         raise RuntimeError("func tool {name} not found")
                     tool_result = func_tools_map[name](args)
