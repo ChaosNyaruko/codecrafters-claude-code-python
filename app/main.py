@@ -73,6 +73,7 @@ class ReadTool(FunctionTool):
             )
         )
     def __call__(self, args: dict):
+        print("read args: ", args, file=sys.stderr)
         try:
             with open(list(args.values())[0], 'r') as file:
                 content = file.read()
