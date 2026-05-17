@@ -87,6 +87,15 @@ def main():
         print(f"response: {response}", file=sys.stderr)
         if response.choices[0].finish_reason == "tool_calls":
             tool_calls = response.choices[0].message.tool_calls
+            role = response.choices[0].message.role
+            content = response.choices[0].message.content
+            print(f"role: {role}, content: {content}", file=sys.stderr)
+            messages.append(
+                    {
+                        "role": role,
+                        "content": content,
+                    }
+                )
             for tool_call in tool_calls:
                 tool_call_id = tool_call.id
                 if tool_call.type == "function":
@@ -103,7 +112,6 @@ def main():
                     })
                 else:
                     raise RuntimeError("we don't have non-function tools yet")
-            break
         else:
             print(response.choices[0].message.content)
             break
