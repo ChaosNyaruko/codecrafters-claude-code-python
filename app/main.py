@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import re
 
 from pydantic import BaseModel
 from typing import Literal 
@@ -172,19 +173,38 @@ def main():
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
     system_prompt, skills = build_system_prompt()
-    user = ""
+    user = []
+    # NOTE: we only support invoking ONE skill at one time
+    invoked = False
+    skill_args = []
     for w in args.p.split():
+        if invoked:
+            skill_args.append(w)
+            continue
         if w.startswith("/"):
             slashcmd = w[1:]
-            if slashcmd in skills:
-                user += skills[slashcmd].get("body")
+            if not invoked and slashcmd in skills:
+                invoked = True
+                user.append(skills[slashcmd].get("body"))
             else:
-                user += " " + w
+                user.append(w)
         else:
-            user += " " + w
+            user.append(w)
 
-    # print("sys:", system_prompt)
-    # print("user:", user)
+    user = " ".join(user)
+    # print("user before args:", user)
+
+    all_args = " ".join(skill_args)
+
+    ALL_ARGS_RE = re.compile(r"\$ARGUMENTS")
+    POSITIONAL_ARG_RE = re.compile(r"\$(\d+)")
+
+    user = ALL_ARGS_RE.sub(all_args, user)
+    # print("user after trying sub $ARGUMENTS:", user)
+    user = POSITIONAL_ARG_RE.sub(lambda m: skill_args[int(m.group(1))], user)
+
+    # print("user after trying sub $0/1/2:", user)
+
     # exit(1)
     messages = [
         {"role": "system", "content": system_prompt},
