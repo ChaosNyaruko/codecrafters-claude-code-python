@@ -7,6 +7,8 @@ import sys
 
 from pydantic import BaseModel
 from typing import Literal 
+from typing import Tuple 
+from typing import Dict 
 from openai import OpenAI
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -134,26 +136,30 @@ tools = [
 func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool()}
 
 
-def build_system_prompt() -> str:
-    # loal skill
-    skill_paths = [Path(".claude/skills"), Path("~/.claude/skills").expanduser()]
+def build_system_prompt() -> Tuple[str, Dict]:
+    # loal skill, and we only load project scoped skills
+    skill_path = Path(".claude/skills")
     prompt = f"You have access to the following skill:\n\n"
-    for skill_path in skill_paths:
-        skills = skill_path.glob("*/SKILL.md")
-        skills = {e.parent.name: e.read_text() for e in skills}
+    skill_files = skill_path.glob("*/SKILL.md")
+    skills = {}
 
-        for (k, v) in skills.items():
-            # parse front matter
-            if not v.startswith("---\n"):
-                continue
-            _, meta, body = v.split("---\n", 2)
+    for e in skill_files:
+        v = e.read_text()
+        # parse front matter
+        if not v.startswith("---\n"):
+            continue
+        _, meta, body = v.split("---\n", 2)
 
-            import yaml
-            meta = yaml.safe_load(meta)
-            s = "- {name}: {desc}\n".format(name=meta.get("name"), desc=meta.get("description"))
-            prompt += s
+        import yaml
+        meta = yaml.safe_load(meta)
 
-    return prompt
+        name = meta.get("name")
+        desc = meta.get("description")
+        s = f"- {name}: {desc}\n"
+        skills[name] = {"meta": meta, "body": body}
+        prompt += s
+
+    return (prompt, skills)
 
 def main():
     p = argparse.ArgumentParser()
@@ -165,10 +171,24 @@ def main():
 
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
-    system_prompt = build_system_prompt()
+    system_prompt, skills = build_system_prompt()
+    user = ""
+    for w in args.p.split():
+        if w.startswith("/"):
+            slashcmd = w[1:]
+            if slashcmd in skills:
+                user += skills[slashcmd].get("body")
+            else:
+                user += " " + w
+        else:
+            user += " " + w
+
+    # print("sys:", system_prompt)
+    # print("user:", user)
+    # exit(1)
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": args.p},
+        {"role": "user", "content": user},
     ]
 
     while True:
