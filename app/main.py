@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -133,6 +134,27 @@ tools = [
 func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool()}
 
 
+def build_system_prompt() -> str:
+    # loal skill
+    skill_paths = [Path(".claude/skills"), Path("~/.claude/skills").expanduser()]
+    prompt = f"You have access to the following skill:\n\n"
+    for skill_path in skill_paths:
+        skills = skill_path.glob("*/SKILL.md")
+        skills = {e.parent.name: e.read_text() for e in skills}
+
+        for (k, v) in skills.items():
+            # parse front matter
+            if not v.startswith("---\n"):
+                continue
+            _, meta, body = v.split("---\n", 2)
+
+            import yaml
+            meta = yaml.safe_load(meta)
+            s = "- {name}: {desc}\n".format(name=meta.get("name"), desc=meta.get("description"))
+            prompt += s
+
+    return prompt
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("-p", required=True)
@@ -143,13 +165,17 @@ def main():
 
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
-    messages = [{"role": "user", "content": args.p}]
+    system_prompt = build_system_prompt()
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": args.p},
+    ]
 
     while True:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            tools = tools
+            tools = tools,
         )
 
         if not response.choices or len(response.choices) == 0:
