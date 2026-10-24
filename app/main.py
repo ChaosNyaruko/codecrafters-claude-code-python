@@ -175,26 +175,40 @@ def main():
     system_prompt, skills = build_system_prompt()
     user = []
     # NOTE: we only support invoking ONE skill at one time
+    stack_separation = False
     invoked = False
     skill_args = []
     for w in args.p.split():
-        if invoked:
+        print("processing:", w)
+        if stack_separation:
             skill_args.append(w)
             continue
         if w.startswith("/"):
             slashcmd = w[1:]
-            if not invoked and slashcmd in skills:
+            is_a_skill = slashcmd in skills
+            if is_a_skill:
                 invoked = True
                 user.append(skills[slashcmd].get("body"))
             else:
-                user.append(w)
+                # /apple /non-xxx
+                if invoked:
+                    skill_args.append(w)
+                # /non-xxxx /apple
+                else:
+                    user.append(w)
+                stack_separation = True
         else:
-            user.append(w)
+            if invoked:
+                stack_separation = True
+                skill_args.append(w)
+            else:
+                user.append(w)
 
     user = " ".join(user)
     # print("user before args:", user)
 
     all_args = " ".join(skill_args)
+    # print("skill args", all_args)
 
     ALL_ARGS_RE = re.compile(r"\$ARGUMENTS")
     POSITIONAL_ARG_RE = re.compile(r"\$(\d+)")
