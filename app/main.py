@@ -18,6 +18,34 @@ BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v
 local = os.getenv("CC_LOCAL")
 model = "anthropic/claude-haiku-4.5" if not local else "qwen-plus"
 
+def build_system_prompt() -> Tuple[str, Dict]:
+    # loal skill, and we only load project scoped skills
+    skill_path = Path(".claude/skills")
+    prompt = f"You have access to the following skill:\n\n"
+    skill_files = skill_path.glob("*/SKILL.md")
+    skills = {}
+
+    for e in skill_files:
+        path = e.absolute().relative_to(e.cwd(), walk_up=True).parent
+        v = e.read_text()
+        # parse front matter
+        if not v.startswith("---\n"):
+            continue
+        _, meta, body = v.split("---\n", 2)
+
+        import yaml
+        meta = yaml.safe_load(meta)
+
+        name = meta.get("name")
+        desc = meta.get("description")
+        s = f"- {name}: {desc}\n"
+        skills[name] = {"meta": meta, "body": body, "path": path}
+        prompt += s
+
+    prompt += "\n\nIf a skill matches the user's request, call the Skill tool with its name and follow the instructions it returns.\n"
+
+    return (prompt, skills)
+
 class PropertySchema(BaseModel):
     type: str
     description: str
@@ -88,12 +116,45 @@ class ReadTool(FunctionTool):
         if not filename:
             return "no file name provided"
         try:
-            with open(filename, 'r') as file:
+            with open(Path(filename), 'r') as file:
                 content = file.read()
         except Exception as e:
             print("exception: read ", args, e, file=sys.stderr)
             return ""
         return content
+
+system_prompt, skills = build_system_prompt()
+class SkillTool(FunctionTool):
+    def __init__(self):
+        super().__init__(
+            type = "function",
+            function = FunctionDefinition(
+                name = "Skill",
+                description = "Load a skill's instructions into the conversation",
+                params = ParameterSchema(
+                        type = "object",
+                        props = {
+                            "name": PropertySchema(type="string", description="The name of the skill to use"),
+                            "args": PropertySchema(type="string", description="Optional arguments for the skill"),
+                        },
+                        required = [ "name" ],
+                )
+            )
+        )
+
+    def __call__(self, args):
+        skill = args.get("skill")
+        if not skill:
+            return "skill name not provided"
+        try:
+            if local:
+                return f"that's skill result"
+            else:
+                body = skills.get(skill, "cannot get body of this skill")
+                return f"{body}\n"
+        except Exception as e:
+            print("exception: calling skill", args, e, file=sys.stderr)
+            return "error"
 
 class BashTool(FunctionTool):
     def __init__(self):
@@ -109,6 +170,7 @@ class BashTool(FunctionTool):
                 )
             )
         )
+
     def __call__(self, args):
         args = args.get("parameter") or args.get("parameters") or args.get("command")
         print("bash args: ", args, file=sys.stderr)
@@ -131,37 +193,13 @@ class BashTool(FunctionTool):
 tools = [
     ReadTool().model_dump(),
     WriteTool().model_dump(),
-    BashTool().model_dump()
+    BashTool().model_dump(),
+    SkillTool().model_dump()
 ]
 
-func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool()}
+func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool(), "Skill": SkillTool()}
 
 
-def build_system_prompt() -> Tuple[str, Dict]:
-    # loal skill, and we only load project scoped skills
-    skill_path = Path(".claude/skills")
-    prompt = f"You have access to the following skill:\n\n"
-    skill_files = skill_path.glob("*/SKILL.md")
-    skills = {}
-
-    for e in skill_files:
-        path = e.absolute().relative_to(e.cwd(), walk_up=True).parent
-        v = e.read_text()
-        # parse front matter
-        if not v.startswith("---\n"):
-            continue
-        _, meta, body = v.split("---\n", 2)
-
-        import yaml
-        meta = yaml.safe_load(meta)
-
-        name = meta.get("name")
-        desc = meta.get("description")
-        s = f"- {name}: {desc}\n"
-        skills[name] = {"meta": meta, "body": body, "path": path}
-        prompt += s
-
-    return (prompt, skills)
 
 def main():
     p = argparse.ArgumentParser()
@@ -173,7 +211,6 @@ def main():
 
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
-    system_prompt, skills = build_system_prompt()
     user = []
     # NOTE: we only support invoking ONE skill at one time
     stack_separation = False
