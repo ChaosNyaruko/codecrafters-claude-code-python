@@ -143,7 +143,7 @@ class SkillTool(FunctionTool):
         )
 
     def __call__(self, args):
-        skill = args.get("skill")
+        skill = args.get("skill") or args.get("name")
         if not skill:
             return "skill name not provided"
         try:
