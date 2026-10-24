@@ -179,7 +179,7 @@ def main():
     invoked = False
     skill_args = []
     for w in args.p.split():
-        print("processing:", w)
+        # print("processing:", w)
         if stack_separation:
             skill_args.append(w)
             continue
