@@ -145,6 +145,7 @@ def build_system_prompt() -> Tuple[str, Dict]:
     skills = {}
 
     for e in skill_files:
+        path = e.absolute().relative_to(e.cwd(), walk_up=True).parent
         v = e.read_text()
         # parse front matter
         if not v.startswith("---\n"):
@@ -157,7 +158,7 @@ def build_system_prompt() -> Tuple[str, Dict]:
         name = meta.get("name")
         desc = meta.get("description")
         s = f"- {name}: {desc}\n"
-        skills[name] = {"meta": meta, "body": body}
+        skills[name] = {"meta": meta, "body": body, "path": path}
         prompt += s
 
     return (prompt, skills)
@@ -222,8 +223,12 @@ def main():
     # exit(1)
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user},
     ]
+    for name, skill in skills.items():
+        msg = f"Skill: {name} (located at {skill["path"]})"
+        messages.append({"role": "user", "content": msg}),
+
+    messages.append({"role": "user", "content": user}),
 
     while True:
         response = client.chat.completions.create(
