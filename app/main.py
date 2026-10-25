@@ -378,7 +378,6 @@ def main():
     print(main_agent.run_sync_loop(args.p))
 
 
-
 if __name__ == "__main__":
     # You can use print statements as follows for debugging, they'll be visible when running tests.
     print("Logs from your program will appear here!", file=sys.stderr)
