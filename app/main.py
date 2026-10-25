@@ -299,14 +299,14 @@ class SkillTool(FunctionTool):
         )
 
     def __call__(self, args):
-        skill = args.get("skill") or args.get("name")
-        if not skill:
+        name = args.get("skill") or args.get("name")
+        if not name:
             return "skill name not provided", False
         try:
             if local:
                 return f"that's skill result", True
             else:
-                sk = global_skills.get(skill, "cannot get body of this skill")
+                sk = global_skills.get(name, "cannot get body of this skill")
                 body = sk.body
                 if not sk.fork:
                     return f"{body}\n", False
