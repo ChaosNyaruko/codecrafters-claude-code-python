@@ -8,6 +8,7 @@ import re
 
 from pydantic import BaseModel
 
+from typing import cast
 from typing import Iterable
 from typing import Literal
 from typing import Tuple
@@ -200,13 +201,13 @@ class PropertySchema(BaseModel):
 
 class ParameterSchema(BaseModel):
     type: Literal["object"] = "object"
-    props: dict[str, PropertySchema]
+    properties: dict[str, PropertySchema]
     required: list[str]
 
 class FunctionDefinition(BaseModel):
     name: str
     description: str
-    params: ParameterSchema
+    parameters: ParameterSchema
 
 class FunctionTool(BaseModel):
     type: Literal["function"] = "function"
@@ -219,9 +220,9 @@ class WriteTool(FunctionTool):
             function = FunctionDefinition(
                 name = "Write",
                 description = "Write content to a file",
-                params = ParameterSchema(
+                parameters = ParameterSchema(
                         type = "object",
-                        props = {
+                        properties = {
                             "file_path": PropertySchema(type="string", description="The path of the file to write to"),
                             "content":  PropertySchema(type="string", description="The content to write to the file"),
                         },
@@ -250,9 +251,9 @@ class ReadTool(FunctionTool):
             function = FunctionDefinition(
                 name = "Read",
                 description = "Read and return the contents of a file",
-                params = ParameterSchema(
+                parameters = ParameterSchema(
                         type = "object",
-                        props = {"file_path": PropertySchema(type="string", description="The path to the file to read")},
+                        properties = {"file_path": PropertySchema(type="string", description="The path to the file to read")},
                         required = [ "file_path" ],
                 )
             )
@@ -287,9 +288,9 @@ class SkillTool(FunctionTool):
             function = FunctionDefinition(
                 name = "Skill",
                 description = "Load a skill's instructions into the conversation",
-                params = ParameterSchema(
+                parameters = ParameterSchema(
                         type = "object",
-                        props = {
+                        properties = {
                             "name": PropertySchema(type="string", description="The name of the skill to use"),
                             "args": PropertySchema(type="string", description="Optional arguments for the skill"),
                         },
@@ -327,9 +328,9 @@ class BashTool(FunctionTool):
             function = FunctionDefinition(
                 name = "Bash",
                 description = "Execute a shell command",
-                params = ParameterSchema(
+                parameters = ParameterSchema(
                         type = "object",
-                        props = {"command": PropertySchema(type="string", description="The command to execute")},
+                        properties = {"command": PropertySchema(type="string", description="The command to execute")},
                         required = [ "command" ],
                 )
             )
@@ -354,11 +355,13 @@ class BashTool(FunctionTool):
             print("exception: bash ", args, e, file=sys.stderr)
             return "error", False
 
-global_tools = [
-    ReadTool().model_dump(),
-    WriteTool().model_dump(),
-    BashTool().model_dump(),
-    SkillTool().model_dump()
+global_tools : list[ChatCompletionToolUnionParam] = [
+    cast(ChatCompletionToolUnionParam, t.model_dump()) for t in (
+        ReadTool(),
+        WriteTool(),
+        BashTool(),
+        SkillTool(),
+    )
 ]
 
 global_client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
