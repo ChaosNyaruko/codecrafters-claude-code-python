@@ -259,11 +259,13 @@ class ReadTool(FunctionTool):
         )
     def __call__(self, args):
         print("read args: type: ", args, type(args), file=sys.stderr)
-        args = args.get("parameter") or args.get("parameters") or args.get("file") or args
         filename = args
         for k, v in args.items():
             # a "fuzzy" match for models that are not stable (e.g. haiku)
-            if re.compile("param").search(k) or re.compile("name").search(k) or re.compile("file").search(k):
+            if re.compile("param").search(k) or \
+                re.compile("name").search(k) or \
+                re.compile("file").search(k) or \
+                re.compile("path").search(k):
                 filename = v
                 break
 
