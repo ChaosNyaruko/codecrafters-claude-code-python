@@ -190,7 +190,7 @@ def build_system_prompt() -> Tuple[str, Dict]:
         skills[name] = Skill(name, path, meta, body, fork)
         prompt += s
 
-    prompt += "\n\nIf a skill matches the user's request, call the Skill tool with its name and follow the instructions it returns.\n"
+    # prompt += "\n\nIf a skill matches the user's request, call the Skill tool with its name and follow the instructions it returns.\n"
 
     return (prompt, skills)
 
