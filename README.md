@@ -32,3 +32,7 @@ Note: This section is for stages 2 and beyond.
    `app/main.py`.
 3. Run `codecrafters submit` to submit your solution to CodeCrafters. Test
    output will be streamed to your terminal.
+
+# References
+[LSP intro](https://code.visualstudio.com/api/language-extensions/language-server-extension-guide)
+![What is LSP](https://code.visualstudio.com/assets/api/language-extensions/language-server-extension-guide/lsp-languages-editors.png)

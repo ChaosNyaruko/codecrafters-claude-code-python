@@ -14,11 +14,15 @@ from typing import Literal
 from typing import Tuple
 from typing import Dict
 from typing import MutableSequence
+from typing import Optional
+
 from openai import OpenAI
 from openai.types.chat.chat_completion_system_message_param import ChatCompletionSystemMessageParam
 from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
 from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
 from openai.types.chat.chat_completion_tool_union_param import ChatCompletionToolUnionParam
+
+from app.lsp_client import LSPClient
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
@@ -196,8 +200,12 @@ def build_system_prompt() -> Tuple[str, Dict]:
     return (prompt, skills)
 
 class PropertySchema(BaseModel):
-    type: str
+    type: str 
     description: str
+
+    # for LSP tools 
+    enum: Optional[list[str]] = None
+    minimum: Optional[int] = None
 
 class ParameterSchema(BaseModel):
     type: Literal["object"] = "object"
@@ -212,6 +220,49 @@ class FunctionDefinition(BaseModel):
 class FunctionTool(BaseModel):
     type: Literal["function"] = "function"
     function: FunctionDefinition
+
+global_lsp_client = LSPClient.from_environment() 
+class LspTool(FunctionTool):
+    def __init__(self):
+        super().__init__(
+            type = "function",
+            function = FunctionDefinition(
+                name = "LSP",
+                description = "Returns the file, line, and character where a symbol is defined.",
+                parameters = ParameterSchema(
+                        type = "object",
+                        properties = {
+                            "operation": PropertySchema(
+                                type="string", 
+                                enum=["goToDefinition"], 
+                                description=""
+                            ),
+                            "filePath":  PropertySchema(
+                                type="string", 
+                                description="Absolute path, or a path relative to the agent's current working directory."
+                            ),
+                            "line": PropertySchema(
+                                type="integer", 
+                                minimum=1, 
+                                description="1-based line number of the symbol."
+                            ),
+                            "character": PropertySchema(
+                                type="integer", 
+                                minimum=1, 
+                                description="1-based character offset in UTF-16 code units (same as character count for ASCII)"),
+                        },
+                        required = [ "operation", "filePath", "line", "character" ],
+                )
+            )
+        )
+    def __call__(self, args: dict):
+        try:
+            oper = args.get("operation")
+            if not oper:
+                return "operation not found in lsp tool call", False
+            return f"{oper} not implemented yet", False
+        except Exception as e:
+            return f"lsp tool error {e}", False
 
 class WriteTool(FunctionTool):
     def __init__(self):
@@ -355,18 +406,15 @@ class BashTool(FunctionTool):
             print("exception: bash ", args, e, file=sys.stderr)
             return "error", False
 
-global_tools : list[ChatCompletionToolUnionParam] = [
-    cast(ChatCompletionToolUnionParam, t.model_dump()) for t in (
-        ReadTool(),
-        WriteTool(),
-        BashTool(),
-        SkillTool(),
-    )
-]
 
 global_client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
-func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool(), "Skill": SkillTool()}
+func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool(), "Skill": SkillTool(), "LSP": LspTool()}
+global_tools : list[ChatCompletionToolUnionParam] = [
+    cast(ChatCompletionToolUnionParam, t.model_dump(exclude_none=True)) for t in func_tools_map.values()
+]
+# for t in func_tools_map.values():
+#     print(t.model_dump())
 
 def main():
     p = argparse.ArgumentParser()
