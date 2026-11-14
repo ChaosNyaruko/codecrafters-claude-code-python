@@ -7,7 +7,7 @@ import subprocess
 import sys
 import re
 from pydantic import BaseModel, RootModel
-
+from traceback import print_exc
 from typing import cast
 from typing import Iterable
 from typing import Literal
@@ -23,10 +23,6 @@ from openai.types.chat.chat_completion_user_message_param import ChatCompletionU
 from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
 from openai.types.chat.chat_completion_tool_union_param import ChatCompletionToolUnionParam
 
-from urllib.parse import urlparse
-from urllib.request import url2pathname
-
-
 from app.lsp_client import LSPClient
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -34,6 +30,9 @@ BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v
 
 local = os.getenv("CC_LOCAL")
 model = "anthropic/claude-haiku-4.5" if not local else "qwen-plus"
+
+def eprint(*args):
+    print(*args, file=sys.stderr)
 
 class Agent:
     def __init__(self, skills: Dict[str, Skill], tools: Iterable[ChatCompletionToolUnionParam], client: OpenAI, system_prompt):
@@ -249,27 +248,65 @@ class LspReferencesResponse(RootModel[list[LspLocation]]):
     def __getitem__(self, i):
         return self.root[i]
 
+class FileState():
+    def __init__(self):
+        self._version = 1
+
+    def inc(self) -> int:
+        self._version += 1
+        return self._version
+
 class LspClient():
     def __init__(self):
         self.client = LSPClient.from_environment()
-        self.notified = defaultdict(bool)
+        self.notified = dict()
 
-    def did_open_if_needed(self, path: Path):
-        # NOTE: just a simple check, no "version control" or "edit"-"re-notify"
-        if not self.notified[str(path)]:
+    def did_change(self, path: Path, text: str):
+        assert self.client is not None
+        # {
+  # "method": "textDocument/didChange",
+  # "params": {
+    # "textDocument": { "uri": "file:///project/checkout.py", "version": 2 },
+    # "contentChanges": [{ "text": "from discounts import total as invoice_total\n\n\ndef checkout_total() -> int:\n    return invoice_total(250, 2)\n" }]
+  # }
+# }
+        p = str(path.absolute())
+        fs = self.notified.get(p)
+        assert fs is not None
+        ver = fs.inc()
+        params = {
+            "textDocument": {
+                "uri": path.as_uri(), 
+                "version": ver,
+            },
+            # The server uses full synchronization: contentChanges contains one object with the complete text that was saved, including line breaks. No diff or edit range is needed.
+            "contentChanges": [
+                {
+                    "text": text
+                }
+            ]
+        }
+        self.client.notify("textDocument/didChange", params)
+
+    def did_open_if_needed(self, path: Path) -> bool:
+        assert self.client is not None
+        eprint("etl type", type(self.client.extension_to_language), self.client.extension_to_language)
+        langId = self.client.extension_to_language.get(''.join(path.suffixes))
+        if not self.notified.get(str(path)):
             with open(path, 'r') as file:
                 text = file.read()
             nt_params = {
                 "textDocument": {
                     "uri": path.as_uri(), 
-                    "languageId": "python",
+                    "languageId": langId,
                     "version": 1,
                     "text": text,
                 },
             }
-            assert self.client is not None
             self.client.notify("textDocument/didOpen", nt_params)
-            self.notified[str(path)] = True
+            self.notified[str(path)] = FileState()
+            return True
+        return False
 
 global_lsp_client = LspClient()
 
@@ -331,7 +368,8 @@ class LspTool(FunctionTool):
 
                 resp = global_lsp_client.client.request("textDocument/definition", def_params)
                 resp = LspDefinitionResponse.model_validate(resp)
-                p = Path(url2pathname(urlparse(resp.uri).path))
+                p = Path.from_uri(resp.uri)
+                eprint(p)
                 return f"Defined in {p}:{resp.range.start.line + 1}:{resp.range.start.character + 1}", False
             elif oper == REFERENCES:
                 path = Path(args.get("filePath", "")).absolute()
@@ -356,7 +394,7 @@ class LspTool(FunctionTool):
                 res = ""
                 locs = defaultdict(list[LspLinePos])
                 for l in resp:
-                    p = str(Path(url2pathname(urlparse(l.uri).path)))
+                    p = str(Path.from_uri(l.uri))
                     line = l.range.start.line + 1
                     col = l.range.start.character + 1
                     locs[p].append(LspLinePos(line=line, character=col))
@@ -367,12 +405,11 @@ class LspTool(FunctionTool):
                     for l in ls:
                         f += f" Line:{l.line}:{l.character}\n"
                     res += f + "\n"
-                print("references:", res, file=sys.stderr)
                 return res, False
-
             else:    
                 return f"{oper} not implemented yet", False
         except Exception as e:
+            print_exc()
             return f"lsp tool error {e}", False
 
 class WriteTool(FunctionTool):
@@ -401,6 +438,11 @@ class WriteTool(FunctionTool):
             content = args_list[1]
             with open(filename, 'w') as file:
                 file.write(content)
+            if global_lsp_client.client is not None:
+                p = Path(filename).absolute()
+                init = global_lsp_client.did_open_if_needed(p)
+                if not init:
+                    global_lsp_client.did_change(p, content)
         except Exception as e:
             print("exception: write ", args, e)
             return f"Write error, {e}", False
@@ -421,7 +463,7 @@ class ReadTool(FunctionTool):
             )
         )
     def __call__(self, args):
-        print("read args: type: ", args, type(args), file=sys.stderr)
+        # print("read args: type: ", args, type(args), file=sys.stderr)
         filename = ""
         for k, v in args.items():
             # a "fuzzy" match for models that are not stable (e.g. haiku)
