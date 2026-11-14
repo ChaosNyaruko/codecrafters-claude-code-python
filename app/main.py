@@ -1,12 +1,12 @@
 import argparse
+from collections import defaultdict
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import re
-
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 
 from typing import cast
 from typing import Iterable
@@ -16,11 +16,16 @@ from typing import Dict
 from typing import MutableSequence
 from typing import Optional
 
+
 from openai import OpenAI
 from openai.types.chat.chat_completion_system_message_param import ChatCompletionSystemMessageParam
 from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
 from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
 from openai.types.chat.chat_completion_tool_union_param import ChatCompletionToolUnionParam
+
+from urllib.parse import urlparse
+from urllib.request import url2pathname
+
 
 from app.lsp_client import LSPClient
 
@@ -221,17 +226,28 @@ class FunctionTool(BaseModel):
     type: Literal["function"] = "function"
     function: FunctionDefinition
 
-class LspPos(BaseModel):
+class LspLinePos(BaseModel):
     line: int
     character: int
 
 class LspRange(BaseModel):
-    start: LspPos
-    end: LspPos
+    start: LspLinePos
+    end: LspLinePos
 
-class LspDefinitionResponse(BaseModel):
+    
+class LspLocation(BaseModel):
     uri: str
     range: LspRange
+
+LspDefinitionResponse = LspLocation
+
+class LspReferencesResponse(RootModel[list[LspLocation]]):
+    def __iter__(self):
+        return iter(self.root)
+    def __len__(self):
+        return len(self.root)
+    def __getitem__(self, i):
+        return self.root[i]
 
 class LspClient():
     def __init__(self):
@@ -240,6 +256,7 @@ class LspClient():
 global_lsp_client = LspClient()
 
 DEFINITION = "goToDefinition"
+REFERENCES = "findReferences"
 class LspTool(FunctionTool):
     def __init__(self):
         super().__init__(
@@ -252,7 +269,7 @@ class LspTool(FunctionTool):
                         properties = {
                             "operation": PropertySchema(
                                 type="string", 
-                                enum=[DEFINITION], 
+                                enum=[DEFINITION, REFERENCES], 
                                 description=""
                             ),
                             "filePath":  PropertySchema(
@@ -306,10 +323,56 @@ class LspTool(FunctionTool):
                 global_lsp_client.client.notify("textDocument/didOpen", nt_params)
                 resp = global_lsp_client.client.request("textDocument/definition", def_params)
                 resp = LspDefinitionResponse.model_validate(resp)
-                from urllib.parse import urlparse
-                from urllib.request import url2pathname
                 p = Path(url2pathname(urlparse(resp.uri).path))
                 return f"Defined in {p}:{resp.range.start.line + 1}:{resp.range.start.character + 1}", False
+            elif oper == REFERENCES:
+                path = Path(args.get("filePath", "")).absolute()
+                with open(path, 'r') as file:
+                    text = file.read()
+                path = path.as_uri()
+                line = args.get("line", 1)
+                character = args.get("character", 1)
+                nt_params = {
+                    "textDocument": {
+                        "uri": path, 
+                        "languageId": "python",
+                        "version": 1,
+                        "text":text,
+                    },
+                }
+                params = {
+                    "textDocument": {
+                        "uri": path,
+                    },
+                    "position": {
+                        "line": line - 1,
+                        "character": character - 1,
+                    },
+                    "context": {
+                        "includeDeclaration": True,
+                    }
+                }
+                assert global_lsp_client.client is not None, "lsp client should not be None"
+                global_lsp_client.client.notify("textDocument/didOpen", nt_params)
+                resp = global_lsp_client.client.request("textDocument/references", params)
+                resp = LspReferencesResponse.model_validate(resp)
+                res = ""
+                locs = defaultdict(list[LspLinePos])
+                for l in resp:
+                    p = str(Path(url2pathname(urlparse(l.uri).path)))
+                    line = l.range.start.line + 1
+                    col = l.range.start.character + 1
+                    locs[p].append(LspLinePos(line=line, character=col))
+                if len(locs) == 0:
+                    return "No references found", False
+                for (file, ls) in locs.items():
+                    f = file + "\n"
+                    for l in ls:
+                        f += f" Line:{l.line}:{l.character}\n"
+                    res += f + "\n"
+                print("references:", res, file=sys.stderr)
+                return res, False
+
             else:    
                 return f"{oper} not implemented yet", False
         except Exception as e:
