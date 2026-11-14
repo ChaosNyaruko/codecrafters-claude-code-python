@@ -398,6 +398,18 @@ class LspClient():
 
 global_lsp_client = LspClient()
 
+def describe_position(path: Path, line: int, character: int) -> str:
+    """Echo the source line at a 1-based position so the model can verify it."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as e:
+        return f"Queried {path}:{line}:{character} (could not read file: {e})"
+    if not 1 <= line <= len(lines):
+        return f"Queried {path}:{line}:{character}, but the file only has {len(lines)} lines."
+    text = lines[line - 1]
+    marker = " " * (character - 1) + "^"
+    return f"Queried {path}:{line}:{character}, source line:\n{text}\n{marker}"
+
 DEFINITION = "goToDefinition"
 REFERENCES = "findReferences"
 class LspTool(FunctionTool):
@@ -406,7 +418,14 @@ class LspTool(FunctionTool):
             type = "function",
             function = FunctionDefinition(
                 name = "LSP",
-                description = "Returns the file, line, and character where a symbol is defined.",
+                description = (
+                    "Query the language server. goToDefinition returns where the symbol at a position is "
+                    "defined; findReferences returns every location that references it. Positions are "
+                    "1-based and must match the file's CURRENT contents: after you edit a file, line "
+                    "numbers shift, so re-derive the position (e.g. Read the file, or run goToDefinition "
+                    "again) instead of reusing an old one. Each result echoes the source line at the "
+                    "queried position so you can confirm you hit the intended symbol."
+                ),
                 parameters = ParameterSchema(
                         type = "object",
                         properties = {
@@ -458,7 +477,8 @@ class LspTool(FunctionTool):
                 resp = LspDefinitionResponse.model_validate(resp)
                 p = Path.from_uri(resp.uri)
                 eprint(p)
-                return f"Defined in {p}:{resp.range.start.line + 1}:{resp.range.start.character + 1}", False
+                return (describe_position(path, line, character) + "\n" +
+                        f"Defined in {p}:{resp.range.start.line + 1}:{resp.range.start.character + 1}"), False
             elif oper == REFERENCES:
                 path = Path(args.get("filePath", "")).absolute()
                 line = args.get("line", 1)
@@ -478,6 +498,8 @@ class LspTool(FunctionTool):
                 global_lsp_client.did_open_if_needed(path)
                 assert global_lsp_client.client is not None, "lsp client should not be None"
                 resp = global_lsp_client.client.request("textDocument/references", params)
+                # Before the loop below, which reuses the `line` name.
+                where = describe_position(path, line, character)
                 resp = LspReferencesResponse.model_validate(resp)
                 res = ""
                 locs = defaultdict(list[LspLinePos])
@@ -487,13 +509,14 @@ class LspTool(FunctionTool):
                     col = l.range.start.character + 1
                     locs[p].append(LspLinePos(line=line, character=col))
                 if len(locs) == 0:
-                    return "No references found", False
+                    return (where + "\nNo references found. The position may not be on a symbol; "
+                            "check the source line above and the current line numbers."), False
                 for (file, ls) in locs.items():
                     f = file + "\n"
                     for l in ls:
                         f += f" Line:{l.line}:{l.character}\n"
                     res += f + "\n"
-                return res, False
+                return where + "\n" + res, False
             else:    
                 return f"{oper} not implemented yet", False
         except Exception as e:
@@ -638,11 +661,15 @@ class BashTool(FunctionTool):
             if local:
                 return f"executed command: {command}", False
             else:
-                result = subprocess.run(["bash", "-c", command], capture_output = True)
-                if result.returncode != 0:
-                    return f"exit code: {result.returncode}, stderr {result.stderr}", False
-                else:
-                    return f"sucess, output\n: {result.stdout}", False
+                # Many tools (e.g. unittest) write their report to stderr even on
+                # success, so always return both streams, decoded as text.
+                result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
+                out = f"exit code: {result.returncode}\n"
+                if result.stdout:
+                    out += f"stdout:\n{result.stdout}\n"
+                if result.stderr:
+                    out += f"stderr:\n{result.stderr}\n"
+                return out, False
         except Exception as e:
             eprint("exception: bash ", args, e)
             return "error", False
