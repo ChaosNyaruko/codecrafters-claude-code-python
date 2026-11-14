@@ -221,7 +221,25 @@ class FunctionTool(BaseModel):
     type: Literal["function"] = "function"
     function: FunctionDefinition
 
-global_lsp_client = LSPClient.from_environment() 
+class LspPos(BaseModel):
+    line: int
+    character: int
+
+class LspRange(BaseModel):
+    start: LspPos
+    end: LspPos
+
+class LspDefinitionResponse(BaseModel):
+    uri: str
+    range: LspRange
+
+class LspClient():
+    def __init__(self):
+        self.client = LSPClient.from_environment()
+
+global_lsp_client = LspClient()
+
+DEFINITION = "goToDefinition"
 class LspTool(FunctionTool):
     def __init__(self):
         super().__init__(
@@ -234,7 +252,7 @@ class LspTool(FunctionTool):
                         properties = {
                             "operation": PropertySchema(
                                 type="string", 
-                                enum=["goToDefinition"], 
+                                enum=[DEFINITION], 
                                 description=""
                             ),
                             "filePath":  PropertySchema(
@@ -260,7 +278,40 @@ class LspTool(FunctionTool):
             oper = args.get("operation")
             if not oper:
                 return "operation not found in lsp tool call", False
-            return f"{oper} not implemented yet", False
+            if oper == DEFINITION:
+                path = Path(args.get("filePath", "")).absolute()
+                with open(path, 'r') as file:
+                    text = file.read()
+                path = path.as_uri()
+                line = args.get("line", 1)
+                character = args.get("character", 1)
+                nt_params = {
+                    "textDocument": {
+                        "uri": path, 
+                        "languageId": "python",
+                        "version": 1,
+                        "text":text,
+                    },
+                }
+                def_params = {
+                    "textDocument": {
+                        "uri": path,
+                    },
+                    "position": {
+                        "line": line - 1,
+                        "character": character - 1,
+                    },
+                }
+                assert global_lsp_client.client is not None, "lsp client should not be None"
+                global_lsp_client.client.notify("textDocument/didOpen", nt_params)
+                resp = global_lsp_client.client.request("textDocument/definition", def_params)
+                resp = LspDefinitionResponse.model_validate(resp)
+                from urllib.parse import urlparse
+                from urllib.request import url2pathname
+                p = Path(url2pathname(urlparse(resp.uri).path))
+                return f"Defined in {p}:{resp.range.start.line + 1}:{resp.range.start.character + 1}", False
+            else:    
+                return f"{oper} not implemented yet", False
         except Exception as e:
             return f"lsp tool error {e}", False
 
