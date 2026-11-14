@@ -252,7 +252,7 @@ class LspReferencesResponse(RootModel[list[LspLocation]]):
 class LspClient():
     def __init__(self):
         self.client = LSPClient.from_environment()
-        self.notified = defaultdict()
+        self.notified = defaultdict(bool)
 
     def did_open_if_needed(self, path: Path):
         # NOTE: just a simple check, no "version control" or "edit"-"re-notify"
