@@ -269,7 +269,7 @@ class LspClient():
             }
             assert self.client is not None
             self.client.notify("textDocument/didOpen", nt_params)
-            self.notified[str(path)]
+            self.notified[str(path)] = True
 
 global_lsp_client = LspClient()
 
