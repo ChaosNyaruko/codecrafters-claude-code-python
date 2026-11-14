@@ -242,7 +242,7 @@ class LspLocation(BaseModel):
 LspDefinitionResponse = LspLocation
 
 class LspReferencesResponse(RootModel[list[LspLocation]]):
-    def __iter__(self):
+    def __iter__(self): # pyright: ignore[reportIncompatibleMethodOverride]
         return iter(self.root)
     def __len__(self):
         return len(self.root)
@@ -252,6 +252,24 @@ class LspReferencesResponse(RootModel[list[LspLocation]]):
 class LspClient():
     def __init__(self):
         self.client = LSPClient.from_environment()
+        self.notified = defaultdict()
+
+    def did_open_if_needed(self, path: Path):
+        # NOTE: just a simple check, no "version control" or "edit"-"re-notify"
+        if self.notified[str(path)]:
+            with open(path, 'r') as file:
+                text = file.read()
+            nt_params = {
+                "textDocument": {
+                    "uri": path.as_uri(), 
+                    "languageId": "python",
+                    "version": 1,
+                    "text": text,
+                },
+            }
+            assert self.client is not None
+            self.client.notify("textDocument/didOpen", nt_params)
+            self.notified[str(path)]
 
 global_lsp_client = LspClient()
 
@@ -297,52 +315,31 @@ class LspTool(FunctionTool):
                 return "operation not found in lsp tool call", False
             if oper == DEFINITION:
                 path = Path(args.get("filePath", "")).absolute()
-                with open(path, 'r') as file:
-                    text = file.read()
-                path = path.as_uri()
                 line = args.get("line", 1)
                 character = args.get("character", 1)
-                nt_params = {
-                    "textDocument": {
-                        "uri": path, 
-                        "languageId": "python",
-                        "version": 1,
-                        "text":text,
-                    },
-                }
                 def_params = {
                     "textDocument": {
-                        "uri": path,
+                        "uri": path.as_uri(),
                     },
                     "position": {
                         "line": line - 1,
                         "character": character - 1,
                     },
                 }
+                global_lsp_client.did_open_if_needed(path)
                 assert global_lsp_client.client is not None, "lsp client should not be None"
-                global_lsp_client.client.notify("textDocument/didOpen", nt_params)
+
                 resp = global_lsp_client.client.request("textDocument/definition", def_params)
                 resp = LspDefinitionResponse.model_validate(resp)
                 p = Path(url2pathname(urlparse(resp.uri).path))
                 return f"Defined in {p}:{resp.range.start.line + 1}:{resp.range.start.character + 1}", False
             elif oper == REFERENCES:
                 path = Path(args.get("filePath", "")).absolute()
-                with open(path, 'r') as file:
-                    text = file.read()
-                path = path.as_uri()
                 line = args.get("line", 1)
                 character = args.get("character", 1)
-                nt_params = {
-                    "textDocument": {
-                        "uri": path, 
-                        "languageId": "python",
-                        "version": 1,
-                        "text":text,
-                    },
-                }
                 params = {
                     "textDocument": {
-                        "uri": path,
+                        "uri": path.as_uri(),
                     },
                     "position": {
                         "line": line - 1,
@@ -352,8 +349,8 @@ class LspTool(FunctionTool):
                         "includeDeclaration": True,
                     }
                 }
+                global_lsp_client.did_open_if_needed(path)
                 assert global_lsp_client.client is not None, "lsp client should not be None"
-                global_lsp_client.client.notify("textDocument/didOpen", nt_params)
                 resp = global_lsp_client.client.request("textDocument/references", params)
                 resp = LspReferencesResponse.model_validate(resp)
                 res = ""
