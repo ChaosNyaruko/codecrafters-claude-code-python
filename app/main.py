@@ -256,7 +256,7 @@ class LspClient():
 
     def did_open_if_needed(self, path: Path):
         # NOTE: just a simple check, no "version control" or "edit"-"re-notify"
-        if self.notified[str(path)]:
+        if not self.notified[str(path)]:
             with open(path, 'r') as file:
                 text = file.read()
             nt_params = {
