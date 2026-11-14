@@ -29,9 +29,11 @@ API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
 
 local = os.getenv("CC_LOCAL")
+debug = os.getenv("DEBUG")
 model = "anthropic/claude-haiku-4.5" if not local else "qwen-plus"
 
 def eprint(*args):
+    return
     print(*args, file=sys.stderr)
 
 class Agent:
@@ -65,7 +67,6 @@ class Agent:
         invoked = False
         skill_args = []
         for w in prompt.split():
-            # print("processing:", w)
             if stack_separation:
                 skill_args.append(w)
                 continue
@@ -91,19 +92,19 @@ class Agent:
                     user.append(w)
 
         user = " ".join(user)
-        # print("user before args:", user)
+        # eprint("user before args:", user)
 
         all_args = " ".join(skill_args)
-        # print("skill args", all_args)
+        # eprint("skill args", all_args)
 
         ALL_ARGS_RE = re.compile(r"\$ARGUMENTS")
         POSITIONAL_ARG_RE = re.compile(r"\$(\d+)")
 
         user = ALL_ARGS_RE.sub(all_args, user)
-        # print("user after trying sub $ARGUMENTS:", user)
+        # eprint("user after trying sub $ARGUMENTS:", user)
         user = POSITIONAL_ARG_RE.sub(lambda m: skill_args[int(m.group(1))], user)
 
-        # print("user after trying sub $0/1/2:", user)
+        # eprint("user after trying sub $0/1/2:", user)
 
         # exit(1)
         messages = list()
@@ -116,7 +117,7 @@ class Agent:
         return messages, False
 
     def run_sync_loop(self, prompt: str) -> str:
-        print(f"agent prompt: {prompt}", file=sys.stderr)
+        eprint(f"agent prompt: {prompt}")
         user_messages, delegated = self.process_user_input(prompt)
         messages = list()
         if self.system_prompt:
@@ -130,6 +131,10 @@ class Agent:
             for u in user_messages:
                 messages.append(u)
         while True:
+            global_lsp_client.get_diagnostics_notification()
+            if len(messages) > 0 and messages[-1]["role"] == "tool":
+                info = global_lsp_client.send_diagnostics()
+                messages[-1]["content"] = messages[-1]["content"] + info
             response = self.client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -138,7 +143,7 @@ class Agent:
             if not response.choices or len(response.choices) == 0:
                 raise RuntimeError("no choices in response")
 
-            print(f"response: {response}", file=sys.stderr)
+            eprint(f"response: {response}")
             if response.choices[0].finish_reason == "tool_calls":
                 tool_calls = response.choices[0].message.tool_calls
                 assert tool_calls is not None, "tool call should not be None"
@@ -151,7 +156,8 @@ class Agent:
                         if name not in func_tools_map:
                             raise RuntimeError("func tool {name} not found")
                         tool_result, stop = func_tools_map[name](args)
-                        print(f"tool_call result: {tool_call}, result: {tool_result}", file=sys.stderr)
+
+                        eprint(f"tool_call result: {tool_call}, result: {tool_result}")
                         if stop:
                             return tool_result
                         messages.append({
@@ -250,16 +256,96 @@ class LspReferencesResponse(RootModel[list[LspLocation]]):
 
 class FileState():
     def __init__(self):
-        self._version = 1
+        self.version = 1
 
     def inc(self) -> int:
-        self._version += 1
-        return self._version
+        self.version += 1
+        return self.version
+
+class LspDiagnostic(BaseModel):
+    range: LspRange
+    severity: int | None = None
+    message: str
+
+class LspDiagnostics(RootModel[list[LspDiagnostic]]):
+    def __iter__(self): # pyright: ignore[reportIncompatibleMethodOverride]
+        return iter(self.root)
+    def __len__(self):
+        return len(self.root)
+    def __getitem__(self, i):
+        return self.root[i]
+
+class LspNotificationParams(BaseModel):
+    uri: str
+    version: int | None = None
+    diagnostics: LspDiagnostics 
+
+class LspNotification(BaseModel):
+    method: str
+    params: dict
+
+class LspNotifications(BaseModel):
+    cursor: int
+    notifications: list[LspNotification]
 
 class LspClient():
     def __init__(self):
         self.client = LSPClient.from_environment()
         self.notified = dict()
+        self.next_cursor = 0
+        self.shown: dict[str, set] = defaultdict(set)    # file -> last accepted report
+        self.pending: dict[str, list] = defaultdict(list)  # file -> new issues not yet sent
+
+    def get_diagnostics_notification(self, timeout_ms: int = 100):
+        """Read queued notifications and stage new diagnostics in self.pending.
+
+        Version is checked against the version we sent *at read time*, so this
+        must also run right before a file's version is bumped (see did_change).
+        """
+        if self.client is None:
+            return
+        resp = self.client.notifications(self.next_cursor, timeout_ms)
+        eprint("diag:", resp)
+        ns = LspNotifications.model_validate(resp)
+        self.next_cursor = ns.cursor  # advance even if nothing below is useful
+        for n in ns.notifications:
+            if n.method != "textDocument/publishDiagnostics":
+                continue
+            # Check the version BEFORE validating the diagnostics: stale reports
+            # may be malformed and must be ignored without being parsed.
+            file = str(Path.from_uri(n.params["uri"]).absolute())
+            v = n.params.get("version")
+            fs = self.notified.get(file)
+            if fs is not None and v is not None and fs.version != v:
+                eprint(f"stale report for {file}: sent v{fs.version}, report v{v}")
+                continue
+            params = LspNotificationParams.model_validate(n.params)
+            keys = [(d.range.start.line, d.range.start.character, d.message)
+                    for d in params.diagnostics]
+            # Only issues absent from the previous report count as new; the
+            # latest report replaces the previous one (empty list clears it).
+            prev = self.shown[file]
+            self.pending[file].extend(k for k in keys if k not in prev)
+            self.shown[file] = set(keys)
+
+    def send_diagnostics(self) -> str:
+        """Format and drain staged diagnostics; "" if there is nothing new."""
+        if not any(self.pending.values()):
+            self.pending.clear()
+            return ""
+        groups = []
+        for file, keys in self.pending.items():
+            if not keys:
+                continue
+            lines = [f"  [Line {line + 1}:{char + 1}] {msg}" for line, char, msg in keys]
+            groups.append(os.path.relpath(file) + ":\n" + "\n".join(lines))
+        self.pending.clear()
+        res = ("\n\n<new-diagnostics>The following new diagnostic issues were detected "
+               "(use them to repair your edits):\n\n"
+               + "\n\n".join(groups) + "</new-diagnostics>")
+        eprint("[for model:]", res)
+        return res
+
 
     def did_change(self, path: Path, text: str):
         assert self.client is not None
@@ -273,6 +359,9 @@ class LspClient():
         p = str(path.absolute())
         fs = self.notified.get(p)
         assert fs is not None
+        # Consume reports for the current version before we bump it, otherwise
+        # they would look stale by the time we read them.
+        self.get_diagnostics_notification()
         ver = fs.inc()
         params = {
             "textDocument": {
@@ -290,7 +379,6 @@ class LspClient():
 
     def did_open_if_needed(self, path: Path) -> bool:
         assert self.client is not None
-        eprint("etl type", type(self.client.extension_to_language), self.client.extension_to_language)
         langId = self.client.extension_to_language.get(''.join(path.suffixes))
         if not self.notified.get(str(path)):
             with open(path, 'r') as file:
@@ -433,7 +521,7 @@ class WriteTool(FunctionTool):
         try:
             args = args.get("parameter") or args.get("parameters") or args
             args_list = list(args.values())
-            print("write args_list: ", args_list, file=sys.stderr)
+            eprint("write args_list: ", args_list)
             filename = args_list[0]
             content = args_list[1]
             with open(filename, 'w') as file:
@@ -444,7 +532,7 @@ class WriteTool(FunctionTool):
                 if not init:
                     global_lsp_client.did_change(p, content)
         except Exception as e:
-            print("exception: write ", args, e)
+            eprint("exception: write ", args, e)
             return f"Write error, {e}", False
         return f"file {filename} written successfully", False
 
@@ -463,7 +551,7 @@ class ReadTool(FunctionTool):
             )
         )
     def __call__(self, args):
-        # print("read args: type: ", args, type(args), file=sys.stderr)
+        # eprint("read args: type: ", args, type(args), file=sys.stderr)
         filename = ""
         for k, v in args.items():
             # a "fuzzy" match for models that are not stable (e.g. haiku)
@@ -480,7 +568,7 @@ class ReadTool(FunctionTool):
             with open(Path(filename), 'r') as file:
                 content = file.read()
         except Exception as e:
-            print("exception: read ", filename, e, file=sys.stderr)
+            eprint("exception: read ", filename, e)
             return "", False
         return content, False
 
@@ -522,7 +610,7 @@ class SkillTool(FunctionTool):
                     return answer, True
 
         except Exception as e:
-            print("exception: calling skill", args, e, file=sys.stderr)
+            eprint("exception: calling skill", args, e)
             return "error", True
 
 class BashTool(FunctionTool):
@@ -542,7 +630,7 @@ class BashTool(FunctionTool):
 
     def __call__(self, args):
         args = args.get("parameter") or args.get("parameters") or args.get("command")
-        print("bash args: ", args, file=sys.stderr)
+        eprint("bash args: ", args)
         command = args
         if not command:
             return "no command provided", False
@@ -556,7 +644,7 @@ class BashTool(FunctionTool):
                 else:
                     return f"sucess, output\n: {result.stdout}", False
         except Exception as e:
-            print("exception: bash ", args, e, file=sys.stderr)
+            eprint("exception: bash ", args, e)
             return "error", False
 
 
@@ -566,8 +654,6 @@ func_tools_map = {"Read": ReadTool(), "Write": WriteTool(), "Bash": BashTool(), 
 global_tools : list[ChatCompletionToolUnionParam] = [
     cast(ChatCompletionToolUnionParam, t.model_dump(exclude_none=True)) for t in func_tools_map.values()
 ]
-# for t in func_tools_map.values():
-#     print(t.model_dump())
 
 def main():
     p = argparse.ArgumentParser()
@@ -584,5 +670,5 @@ def main():
 
 if __name__ == "__main__":
     # You can use print statements as follows for debugging, they'll be visible when running tests.
-    print("Logs from your program will appear here!", file=sys.stderr)
+    eprint("Logs from your program will appear here!")
     main()
