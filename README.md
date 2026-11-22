@@ -134,6 +134,52 @@ APPEND to last tool result: '<new-diagnostics>... checkout.py:\n  [Line 5:12] Ty
   （第 8 行，实际在第 9 行）去做 findReferences，tester 报 "missing findReferences ... at the current definition"。
   修法：LSP tool 的结果里回显被查询位置当前那一行的源码，并用 `^` 标出列；tool 描述里也强调编辑后要重新确定位置。
 
+## tester 源码是怎么判定的
+
+以下内容来自官方 tester `claude-code-tester@9fe518e` 的 `internal/lsp_manager/diagnostics.go` 和 `server.go`。
+
+### 判定逻辑：按事件顺序重放
+
+```go
+case received didOpen/didChange:
+    versions[uri] = 这次的 version
+case sent publishDiagnostics:
+    current := report.Version == nil || *report.Version == versions[report.URI]
+```
+
+`versions[uri]` 是**报告发出那一刻**客户端最后发给 server 的版本，和客户端什么时候读到这份报告无关。因此：
+
+- 报告发出时版本匹配，其中每条诊断都必须送到模型，之后文件再被修改也不例外（失败方式 A）。
+- 不带 version 的报告一律算 current，后面来一份 `[]` 也不会免除前一份的送达要求（失败方式 B）。
+
+### "送到模型"的检查比题目描述宽松
+
+tester 把所有请求里 `messages` 下的字符串拼在一起，再做子串匹配：
+
+```go
+!strings.Contains(text, want.message) || !strings.Contains(text, want.file) || !strings.Contains(text, want.position)
+```
+
+| 题目的说法 | tester 实际检查的内容 |
+|---|---|
+| 通过最新的 tool result 送达 | 出现在任意一次请求的任意消息里即可 |
+| 每条诊断带文件、消息和位置 | 三个子串各自出现即可，不要求在同一行；位置形如 `5:12` |
+| 旧报告不能送达 | 旧报告的 message 不能出现在任何请求里 |
+| 没变化的诊断不要重复发送 | 没有检查 |
+
+没有检查的要求仍然值得遵守：追加到最新 tool result、按文件去重，都会直接影响真实 agent 的效果。
+
+### 假 server 的推送顺序
+
+每次收到 didOpen / didChange，server 会依次推送：
+
+1. stale 场景：`window/logMessage`、preview.py 的 `[]`、一份 `version - 1` 的空报告，然后 `sleep 25ms`。
+2. 被修改文件的当前报告（stale 场景下不带 version）。
+3. stale 场景：一份 `version - 1` 的旧报告，内容是缺少 `range` 的 `Stale diagnostic must be ignored`。
+4. **其他所有已打开文件**各一份报告。checkout.py 的 `[A]` 就来自这一步，所以 checkout.py 必须先被 didOpen 过。
+
+server 只有在客户端 initialize 时声明了 `versionSupport: true` 才会带 version，课程提供的 transport 已经声明了。
+
 ## 调试建议
 
 - 在怀疑模型之前，先看它**实际收到的 tool result** 是什么。
